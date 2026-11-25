@@ -527,4 +527,25 @@ You don't need a six-month security transformation program to get value from thi
 
 ---
 
+## References & Further Reading
+
+* **Discovery & Telemetry:**
+  * [Use logging and monitoring in Cloud DNS](https://cloud.google.com/dns/docs/monitoring)
+  * [VPC Flow Logs overview](https://cloud.google.com/vpc/docs/vpc-flow-logs)
+  * [Flow Analyzer overview (Network Intelligence Center)](https://cloud.google.com/network-intelligence-center/docs/flow-analyzer/concepts/overview)
+  * [Query and analyze logs with Log Analytics](https://cloud.google.com/logging/docs/log-analytics)
+* **Egress Governance & Routing:**
+  * [Cloud NGFW — About FQDN objects](https://cloud.google.com/firewall/docs/about-fqdn-objects) & [Firewall policy rule details](https://cloud.google.com/firewall/docs/firewall-policies-rule-details)
+  * [Cloud NGFW Enterprise — URL filtering overview](https://cloud.google.com/firewall/docs/url-filtering-overview)
+  * [Deploy a Secure Web Proxy instance as a next hop (`NEXT_HOP_ROUTING_MODE`)](https://cloud.google.com/secure-web-proxy/docs/deploy-next-hop)
+  * [Policy-based routes (`DEFAULT_ROUTING` and ILB next hops)](https://cloud.google.com/vpc/docs/policy-based-routes)
+  * [Network Connectivity Center — Preset topologies (Star Hub)](https://cloud.google.com/network-connectivity/docs/network-connectivity-center/concepts/preset-topologies)
+* **Governed AI Golden Path & Security:**
+  * [Access global Google APIs through Private Service Connect endpoints](https://cloud.google.com/vpc/docs/private-service-connect-apis)
+  * [Configure Private Service Connect endpoints in VPC Service Controls](https://cloud.google.com/vpc-service-controls/docs/configure-psc-endpoints) & [Supported products](https://cloud.google.com/vpc-service-controls/docs/supported-products)
+  * [Security Command Center — AI Protection overview](https://cloud.google.com/security-command-center/docs/ai-protection-overview)
+  * [Model Armor overview](https://cloud.google.com/security-command-center/docs/model-armor-overview)
+
+---
+
 *Opinions and architectural recommendations expressed in this article are my own and do not necessarily represent official Google Cloud product statements. Always validate configurations in a non-production sandbox environment before rolling out egress routing changes.*
