@@ -14,7 +14,7 @@ Asset-centric platforms like **Google Cloud Security Command Center (SCC) AI Pro
 
 To close that blind spot, you have to instrument and govern egress **at the VPC network layer**.
 
-In this guide, we walk through a battle-tested, **3-phase architecture** built entirely on native Google Cloud networking services:
+In this guide, we walk through a battle-tested, **3-phase architecture** built entirely on native Google Cloud networking services (all Terraform modules, Log Analytics SQL queries, and a 10-minute verification simulator are available in the companion repository: [github.com/mfrieder123/gcp-vpc-shadow-ai-governance](https://github.com/mfrieder123/gcp-vpc-shadow-ai-governance)):
 
 1. **Phase 1 — Observe (Zero Production Risk):** Correlate Cloud DNS Query Logs with VPC Flow Logs in Log Analytics/BigQuery and Flow Analyzer to identify *which* workloads call external AI services and *how much data* is leaving.
 2. **Phase 2 — Alert & Canary:** Flag new Shadow AI endpoints automatically and validate Layer-7 visibility before enforcing hard blocks.
@@ -86,7 +86,7 @@ To get reliable attribution, you need **two complementary signals**:
 
 ### Enabling Both Signals in Terraform
 
-Enabling Cloud DNS logging requires a `google_dns_policy` attached to your VPC, and enabling rich VPC Flow Logs requires a `log_config` block on your workload subnets:
+Enabling Cloud DNS logging requires a `google_dns_policy` attached to your VPC, and enabling rich VPC Flow Logs requires a `log_config` block on your workload subnets (see the full module with a dedicated Log Analytics bucket and linked BigQuery dataset in [01-discovery/main.tf](https://github.com/mfrieder123/gcp-vpc-shadow-ai-governance/blob/main/01-discovery/main.tf)):
 
 ```hcl
 # Enable Cloud DNS query logging on the workload VPC
@@ -120,7 +120,7 @@ resource "google_compute_subnetwork" "workload_subnet" {
 
 ### Query 1: Fast Shadow AI Domain Inventory (Log Analytics SQL)
 
-Once logs are flowing into your Log Analytics bucket (default view `` `PROJECT_ID.global._Default._AllLogs` ``, or the dedicated `shadow_ai_audit` bucket created by the companion Terraform), run a query against a curated Shadow AI domain catalog. Notice we include **four distinct risk categories**—including consumer `generativelanguage.googleapis.com`, which is often overlooked inside Google Cloud environments when developers test with personal AI Studio keys:
+Once logs are flowing into your Log Analytics bucket (default view `` `PROJECT_ID.global._Default._AllLogs` ``, or the dedicated `shadow_ai_audit` bucket created by `01-discovery/`), run [01_shadow_ai_dns_inventory.sql](https://github.com/mfrieder123/gcp-vpc-shadow-ai-governance/blob/main/01-discovery/sql/01_shadow_ai_dns_inventory.sql) against a curated Shadow AI domain catalog. Notice we include **four distinct risk categories**—including consumer `generativelanguage.googleapis.com`, which is often overlooked inside Google Cloud environments when developers test with personal AI Studio keys:
 
 ```sql
 WITH shadow_ai_catalog AS (
@@ -169,7 +169,7 @@ ORDER BY
 
 ### Query 2: Correlating DNS Lookups with Actual Exfiltrated Volume (VM & GKE Attribution)
 
-Knowing *who looked up* `api.openai.com.` is useful. Knowing that **a specific GKE workload in the `billing-analytics` namespace pushed 480 MB to that resolved IP over the last 24 hours** immediately separates a harmless health check from a real data-exfiltration risk.
+Knowing *who looked up* `api.openai.com.` is useful. Knowing that **a specific GKE workload in the `billing-analytics` namespace pushed 480 MB to that resolved IP over the last 24 hours** immediately separates a harmless health check from a real data-exfiltration risk (full query in [02_correlate_dns_and_flows.sql](https://github.com/mfrieder123/gcp-vpc-shadow-ai-governance/blob/main/01-discovery/sql/02_correlate_dns_and_flows.sql)):
 
 ```sql
 WITH shadow_ai_catalog AS (
@@ -235,7 +235,7 @@ ORDER BY total_mb_sent DESC;
 
 From there, you can pivot straight into **Network Intelligence Center → Flow Analyzer** to visually chart those specific top-talker VMs or GKE clusters over time, spot unexpected nightly batch exfiltration spikes, and hand Engineering an unambiguous, data-backed list of workloads that need migration before enforcement begins.
 
-> **What about rogue remote MCP servers?** Because external MCP servers often run on arbitrary SaaS or developer domains (e.g., `*.workers.dev`, `*.ngrok.app`, `*.trycloudflare.com`, or custom vendor domains), add tunneling/serverless edge domains to a separate `"Unvetted External Tooling / Tunnel"` watch category in your SQL catalog and watch for long-lived HTTPS/SSE connections on port 443.
+> **What about rogue remote MCP servers?** Because external MCP servers often run on arbitrary SaaS or developer domains (e.g., `*.workers.dev`, `*.ngrok.app`, `*.trycloudflare.com`, or custom `mcp.*` vendor subdomains), see [03_rogue_mcp_tunnel_watch.sql](https://github.com/mfrieder123/gcp-vpc-shadow-ai-governance/blob/main/01-discovery/sql/03_rogue_mcp_tunnel_watch.sql) for a ready-to-run query flagging tunneling and unvetted remote MCP lookups.
 
 ---
 
@@ -243,8 +243,8 @@ From there, you can pivot straight into **Network Intelligence Center → Flow A
 
 Flipping a strict egress block on overnight is the quickest way to trigger a P1 incident and lose engineering trust. Treat Phase 2 as your two-week transition buffer:
 
-1. **Automated Shadow AI Alerts:** Turn Query 1 into a scheduled BigQuery query or a Cloud Logging log-based metric that posts to your SecOps SIEM or a security review channel whenever a *new* workload resolves a domain in your Shadow AI catalog.
-2. **Canary L7 Visibility (Audit Mode):** Before enforcing blocks organization-wide, route a single non-production subnet through **Secure Web Proxy** (configured in Phase 3 below) with `basic_profile = "ALLOW"` on the Shadow AI URL list. This achieves two things:
+1. **Automated Shadow AI Alerts:** Turn Query 1 into a scheduled BigQuery query or a Cloud Logging log-based metric + Cloud Monitoring alert policy (implemented in [01-discovery/alerting.tf](https://github.com/mfrieder123/gcp-vpc-shadow-ai-governance/blob/main/01-discovery/alerting.tf)) that notifies your SecOps SIEM or security channel whenever a *new* workload resolves a domain in your Shadow AI catalog.
+2. **Canary L7 Visibility (Audit Mode):** Before enforcing blocks organization-wide, route a single non-production subnet through **Secure Web Proxy** (configured in Phase 3 below) with `swp_enforcement_mode = "ALLOW"` on the Shadow AI URL list. This achieves two things:
    * It verifies application compatibility with zero downtime.
    * It catches workloads that bypassed Cloud DNS altogether (for example, using hardcoded public IPs or custom DNS-over-HTTPS resolvers), because Secure Web Proxy inspects the actual TLS **Server Name Indication (SNI)** / HTTP `Host` header at Layer 7.
 
@@ -281,7 +281,8 @@ Google Cloud's **Secure Web Proxy** solves this with **`NEXT_HOP_ROUTING_MODE`**
 
 ### Terraform Blueprint: SWP in `NEXT_HOP_ROUTING_MODE` with AI URL Lists
 
-Below is a clean, modular Terraform setup that:
+Below is the core Terraform pattern (complete runnable modules live in [02-enforcement-swp/main.tf](https://github.com/mfrieder123/gcp-vpc-shadow-ai-governance/blob/main/02-enforcement-swp/main.tf) and [02-enforcement-swp/url_lists_and_policies.tf](https://github.com/mfrieder123/gcp-vpc-shadow-ai-governance/blob/main/02-enforcement-swp/url_lists_and_policies.tf)):
+
 1. Provisions the required regional `REGIONAL_MANAGED_PROXY` subnet.
 2. Defines two reusable `google_network_security_url_lists`: one for **explicitly approved partner AI/MCP endpoints**, and one for **blocked Shadow AI endpoints**.
 3. Attaches a `google_network_services_gateway` (`type = "SECURE_WEB_GATEWAY"`) in `NEXT_HOP_ROUTING_MODE`.
@@ -386,9 +387,9 @@ resource "google_network_services_gateway" "ai_swp_next_hop" {
 }
 
 # 5. Transparent Traffic Steering via Policy-Based Route (zero client config)
-# Note: Pair with higher-priority DEFAULT_ROUTING bypass PBRs for 10.0.0.0/8 (VPC/PSC),
+# Pair with higher-priority DEFAULT_ROUTING bypass PBRs for 10.0.0.0/8 (VPC/PSC),
 # 35.235.240.0/20 (IAP SSH), 169.254.169.254/32 (Metadata), and 199.36.153.4/30 (restricted VIP).
-# See 02-enforcement-swp/main.tf in the companion repo for the full bypass block.
+# Full bypass block: https://github.com/mfrieder123/gcp-vpc-shadow-ai-governance/blob/main/02-enforcement-swp/main.tf
 resource "google_network_connectivity_policy_based_route" "steer_egress_to_swp" {
   name        = "steer-ai-workloads-to-swp"
   description = "Transparently routes TCP/443 internet egress from governed subnets to SWP"
@@ -414,7 +415,7 @@ resource "google_network_connectivity_policy_based_route" "steer_egress_to_swp" 
 
 * **Regional scope:** Secure Web Proxy is regional; workloads must be in the same region as the SWP instance when using `NEXT_HOP_ROUTING_MODE`.
 * **Supported protocols:** In `NEXT_HOP_ROUTING_MODE`, SWP handles HTTP(S) and TCP proxy traffic; non-TCP traffic (such as UDP/QUIC) routed to it is dropped. Scoping your Policy-Based Route to `ip_protocol = "TCP"` (and restricting UDP/443 QUIC egress via firewall policy so browsers/clients cleanly negotiate HTTPS over TCP/443) avoids surprise packet drops.
-* **Scaling to multi-VPC organizations:** Instead of deploying a separate SWP in every workload VPC, attach spoke VPCs to a **Network Connectivity Center (NCC) Star Hub** and place Secure Web Proxy + Cloud NAT in the central egress transit VPC.
+* **Scaling to multi-VPC organizations:** Instead of deploying a separate SWP in every workload VPC, attach spoke VPCs to a **Network Connectivity Center (NCC) Star Hub** and place Secure Web Proxy + Cloud NAT in the central egress transit VPC (see [02-enforcement-swp/ncc_hub_example/main.tf](https://github.com/mfrieder123/gcp-vpc-shadow-ai-governance/blob/main/02-enforcement-swp/ncc_hub_example/main.tf)).
 * **When to add TLS Inspection:** SNI matching (`host()`) blocks unapproved domains without decrypting traffic or managing client trust stores. Enable a **TLS Inspection Policy** (backed by Certificate Authority Service) only when you need **URL-path or header-level control**—for instance, allowing `mcp.vendor.com/v1/readonly/*` while blocking `mcp.vendor.com/v1/write/*`.
 
 ---
@@ -427,7 +428,7 @@ The goal isn't to stop engineers from using frontier models—it's to route them
 
 ### Private Service Connect (PSC) for Google APIs + VPC Service Controls
 
-Instead of sending Google Cloud AI traffic out through Secure Web Proxy and Cloud NAT, keep it completely off the public internet using a **Private Service Connect endpoint for Google APIs** targeting the **`vpc-sc`** bundle:
+Instead of sending Google Cloud AI traffic out through Secure Web Proxy and Cloud NAT, keep it completely off the public internet using a **Private Service Connect endpoint for Google APIs** targeting the **`vpc-sc`** bundle (full file: [02-enforcement-swp/golden_path_psc.tf](https://github.com/mfrieder123/gcp-vpc-shadow-ai-governance/blob/main/02-enforcement-swp/golden_path_psc.tf)):
 
 ```hcl
 # 1. Reserve a Global Internal IP for PSC -> Google APIs (VPC-SC bundle)
@@ -486,7 +487,7 @@ Layer **Model Armor** (for inline prompt-injection and sensitive-data screening)
 
 ## Putting It to the Test: A 10-Minute End-to-End Verification
 
-When piloting this architecture in a sandbox project (or demonstrating it to your security team), run a simple 4-step verification from a test GCE VM or GKE pod inside the workload subnet:
+When piloting this architecture in a sandbox project (or demonstrating it to your security team), you can deploy the ready-made private test VM and simulator in [03-demo-simulator/](https://github.com/mfrieder123/gcp-vpc-shadow-ai-governance/tree/main/03-demo-simulator) ([simulate_shadow_ai.py](https://github.com/mfrieder123/gcp-vpc-shadow-ai-governance/blob/main/03-demo-simulator/simulate_shadow_ai.py) + [verify.sh](https://github.com/mfrieder123/gcp-vpc-shadow-ai-governance/blob/main/03-demo-simulator/verify.sh)), or run this 4-step manual verification from any GCE VM or GKE pod inside the workload subnet:
 
 ```bash
 # 1. Verify DNS resolution for Google Cloud AI stays private (resolves to 10.10.254.10 PSC IP)
@@ -517,12 +518,12 @@ curl -s -X POST \
 You don't need a six-month security transformation program to get value from this architecture. You can run a **read-only Shadow AI VPC Audit in under an hour**:
 
 1. **Confirm telemetry:** Verify whether Cloud DNS Query Logging (`enable_logging = true`) and VPC Flow Logs (`INCLUDE_ALL_METADATA`) are enabled on your highest-risk dev, data-science, and GKE subnets.
-2. **Run Query 1 & Query 2** in Log Analytics against the last 7 days of logs to build an objective baseline of external LLM APIs, consumer AI Studio keys, model hubs, and unexpected tunnel/MCP endpoints.
+2. **Run [Query 1](https://github.com/mfrieder123/gcp-vpc-shadow-ai-governance/blob/main/01-discovery/sql/01_shadow_ai_dns_inventory.sql) & [Query 2](https://github.com/mfrieder123/gcp-vpc-shadow-ai-governance/blob/main/01-discovery/sql/02_correlate_dns_and_flows.sql)** in Log Analytics against the last 7 days of logs to build an objective baseline of external LLM APIs, consumer AI Studio keys, model hubs, and unexpected tunnel/MCP endpoints.
 3. **Review top talkers in Flow Analyzer** alongside app owners—distinguishing sanctioned experiments from risky production data leaks.
 4. **Provision the Golden Path first:** Deploy PSC (`target = "vpc-sc"`) + Private Cloud DNS + Vertex AI / Model Garden access so developers have an immediate, faster landing spot.
 5. **Roll out SWP (`NEXT_HOP_ROUTING_MODE`) or Cloud NGFW Enterprise URL Filtering** in canary `ALLOW`-with-logging mode for two weeks, then flip your Shadow AI URL list to `DENY`.
 
-*Companion Terraform modules, Log Analytics SQL scripts, and the verification simulator are available in the companion repository: [github.com/mfrieder123/gcp-vpc-shadow-ai-governance](https://github.com/mfrieder123/gcp-vpc-shadow-ai-governance).*
+*All companion Terraform modules, Log Analytics SQL queries, and the 10-minute verification simulator are available on GitHub: [github.com/mfrieder123/gcp-vpc-shadow-ai-governance](https://github.com/mfrieder123/gcp-vpc-shadow-ai-governance).*
 
 ---
 
