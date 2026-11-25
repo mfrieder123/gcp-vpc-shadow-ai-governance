@@ -1,0 +1,9 @@
+project_id           = "your-sandbox-project-id"
+region               = "us-central1"
+vpc_name             = "ai-workloads-vpc"
+workload_subnet_name = "ai-workloads-subnet"
+workload_subnet_cidr = "10.10.0.0/20"
+flow_sampling        = 0.5
+log_retention_days   = 30
+enable_sandbox_nat   = true
+# notification_channels = ["projects/your-sandbox-project-id/notificationChannels/1234567890"]

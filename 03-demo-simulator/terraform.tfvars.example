@@ -1,0 +1,11 @@
+project_id           = "your-sandbox-project-id"
+region               = "us-central1"
+zone                 = "us-central1-a"
+vpc_name             = "ai-workloads-vpc"
+workload_subnet_name = "ai-workloads-subnet"
+
+# Phase 1 (Observe): keep false to simulate ungoverned egress over Cloud NAT.
+# Phase 2/3 (Canary / Enforce): flip to true to attach the SWP Policy-Based Route tag.
+enable_swp_tag = false
+
+gemini_model_id = "gemini-2.5-flash"
